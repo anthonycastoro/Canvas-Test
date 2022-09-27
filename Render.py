@@ -34,11 +34,16 @@ running = False
 clock = game.time.Clock()
 frame = 0	
 Delta = 0
+clamp = lambda n, small, big:  max(small, min(n, big))
+FPSCap = 40
+
 def init():
 	global running
 	global frame
 	global clock
 	global Delta
+	global clamp
+	global FPSCap
 	
 	if running: return
 	
@@ -47,7 +52,7 @@ def init():
 	
 	while 1:
 		frame += 1
-		dt = clock.tick(40) / 1000
+		dt = clock.tick(FPSCap) / 1000
 		Delta = dt
 		
 		# Event Handlers
@@ -79,7 +84,7 @@ def init():
 		# Rendering
 
 		if frame % 10 == 0 or frame == 1: game.display.set_caption(" " + workspace.Name)
-		if frame % 60 == 0: print(workspace.FPS)
+		if frame % FPSCap == 0: print(workspace.FPS)
 
 		window.fill(workspace.SkyColor)
 		for i in Instance.Orientation._Memory:
@@ -98,40 +103,70 @@ def init():
 						surface = i._Surface
 					else:
 						surface = game.Surface((size.x, size.y), game.SRCALPHA).convert_alpha()
+						surface.fill(Color(0,0,0,0))
+						if unchanging:
+							surface.convert()
 						unchanging = False
-					
-					if unchanging:
-						surface = game.transform.scale(surface, (size.x, size.y))
-					i._Surface = surface
 
-					# Adjust Surface
-					surface.fill(Color(0,0,0,0))
-					if i.Transparency > 0 and not unchanging: surface.set_alpha((1 - i.Transparency) * 255)
+					# Positional Variables
 					
-					# Render to surface and rotate
-					i.Render(surface, dt)
-					if i.Rotation != 0 and not unchanging: surface = game.transform.rotate(surface, i.Rotation)
-	
 					ws = window.get_size()
-					size = surface.get_size()
 					cp = cam.Position * cam.Zoom
-	
-					# Paint to Window
 
 					i.AbsoluteCenter = Vector2(
 						pos.x + ws[0]/2 - cp.x,
 						-pos.y + ws[1]/2 + cp.y
 					)
+
+					i.AbsoluteCorner = Vector2(
+						pos.x + ws[0]/2 - cp.x - size[0]/2,
+						-pos.y + ws[1]/2 + cp.y - size[1]/2
+					)
+
+					dontblit = False
+					if unchanging: # Scale without recreating surface
+						p = i.AbsoluteCorner
+						s = size
+						op = p
+						p = Vector2(clamp(p.x,0,ws[0]), clamp(p.y,0,ws[1]))
+						s = Vector2(
+							s.x-p.x,
+							s.y-p.y
+						) + op
+						s = Vector2(
+							clamp(s.x+p.x,0,ws[0]),
+							clamp(s.y+p.y,0,ws[1])
+						) - p
+						
+						i.AbsoluteCorner = p
+						if s.x > 0 and s.y > 0 and p.x < ws[0] and p.y < ws[1]:
+							surface = game.transform.scale(surface, (s.x, s.y))
+							dontblit = False
+						else: 
+							surface = game.transform.scale(surface, (1,1))
+							dontblit = True
+						
+					i._Surface = surface
+
+					# Adjust Surface
 					
-					window.blit(surface, (
-						pos.x + ws[0]/2 - size[0]/2 - cp.x,
-						-pos.y + ws[1]/2 - size[1]/2 + cp.y
-					))
+					if i.Transparency > 0: surface.set_alpha((1 - i.Transparency) * 255)
 					
+					# Render to surface and rotate
+					i.Render(surface, dt)
+					if i.Rotation != 0 and not unchanging: surface = game.transform.rotate(surface, i.Rotation)
+	
+					# Paint to Window
+
+					if not dontblit:
+						window.blit(surface, (
+							i.AbsoluteCorner.x,
+							i.AbsoluteCorner.y
+						))
+										
 					i._Changed = False
 		
 		# Finalize
-
 
 		workspace.FPS = clock.get_fps()
 		game.display.update()
