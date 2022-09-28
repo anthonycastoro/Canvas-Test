@@ -3,6 +3,7 @@ import os
 
 from pygame import Color
 from pygame.math import Vector2
+from Common import *
 
 # Instance Orientation
 
@@ -16,12 +17,13 @@ class Orientation:
 		_Service = False
 		_ServiceCreated = False
 		_Parent = None
-		_Children = []
+		_Children = None
 		_Changed = False
+		_DebugId = -1
 		
 		Name = "Instance"
 		ClassName = "Unknown"
-		Destroyed = True
+		Destroyed = False
 		
 		__str__ = lambda self: self.Name
 
@@ -30,6 +32,7 @@ class Orientation:
 			Orientation._DebugId += 1
 			self._ServiceCreated = None
 			self._Creatiable = None
+			self._Children = []
 		
 		def __getattr__(self, name):
 			if name == "Parent": return self._Parent
@@ -37,8 +40,15 @@ class Orientation:
 			raise AttributeError(self.ClassName + " does not have the attribute '" + name + "''")
 		
 		def __setattr__(self, name, value):
-			self.__dict__["_Changed"] = True
+			if not isinstance(self, object):
+				raise AttributeError("Cannot set index of base class.")
+
+			if getattr(self, name) != value:
+				self.__dict__["_Changed"] = True
+			
 			if name == "Parent":
+				if not (isinstance(value, Orientation.Instance) or value == None):
+					raise AttributeError("Must set Parent to an Instance or None.")
 				before = self._Parent
 				self._Parent = value
 				if before: before._Children.remove(self)
@@ -60,7 +70,11 @@ class Orientation:
 			self.Destroy()
 		
 		def IsA(self, ClassName):
-			return self.ClassName == ClassName
+			if hasattr(Orientation, ClassName):
+				return isinstance(self, getattr(Orientation, ClassName))
+			else:
+				warn(f"{self.ClassName} is not a '{ClassName}' because it isn't a valid class or abstract class.")
+				return False
 
 		def GetChildren(self):
 			return self._Children
@@ -95,7 +109,6 @@ class Orientation:
 			parent = None
 			while 1:
 				parent = self.Parent
-				#print(parent)
 				if parent:
 					if parent == ancestor:
 						return True
@@ -109,8 +122,13 @@ class Orientation:
 
 		def Clone(self):
 			if not self._Service:
-				from copy import copy as clone
-				return clone(self)
+				cloned = Instance.new(self.ClassName)
+				for i, v in vars(self).items():
+					if i == "Destroyed": continue
+					if i.startswith("_"): continue
+					if callable(v): continue
+					setattr(cloned,i,v)
+				return cloned
 			else:
 				raise Exception(f"Cannot clone Service '{self.ClassName}'")
 
@@ -118,6 +136,7 @@ class Orientation:
 	class Workspace (Instance):
 		_Creatiable = False
 		_Service = True
+		Name = "Workspace"
 		
 		SkyColor = Color(125,125,255)
 		Gravity = 100
@@ -131,6 +150,13 @@ class Orientation:
 			ZoomRange = Vector2(3, 150)
 			Speed = Vector2(7,7)
 
+	class PlayerGui (Instance):
+		_Creatiable = False
+		_Service = True
+		Name = "PlayerGui"
+
+		Debug = True
+	
 	# Abstract Instances
 	class PVObject (Instance):
 		_Creatiable = False
@@ -145,8 +171,10 @@ class Orientation:
 		Rotation = 0
 		Transparency = 0
 		ZIndex = 1
+		
+		AbsoluteCorner = Vector2()
+		AbsoluteSize = Vector2(100,100)
 		AbsoluteCenter = Vector2(50,50)
-		AbsoluteCorner = Vector2(0,0)
 
 	# Invisible Instances
 	
@@ -154,6 +182,7 @@ class Orientation:
 		_Creatiable = True
 		_IsPlaying = False
 		_Path = ""
+		Path = ""
 		
 		Mixer = None
 		Channel = None
@@ -173,11 +202,12 @@ class Orientation:
 			self.Channel = game.mixer.Channel(self.GetDebugId())
 		
 		def __setattr__(self, name, value):
-			super().__setattr__(name, value)
 			if name == "Path":
 				if self.Mixer: self.Mixer.stop()
-				name = value.split("/")[1]
-				fold = value.split("/")[0]
+				split = value.split("/")
+				name = split[-1]
+				del split[-1]
+				fold = "/".join(split)
 				ext = ""
 				
 				for file in os.listdir("Audio/" + fold):
@@ -188,14 +218,16 @@ class Orientation:
 				p = "Audio/" + value + ext
 				self.Mixer = game.mixer.Sound(p)
 				self.Length = self.Mixer.get_length()
-				self._Path = p
+				self.__dict__["Path"] = p
 			else:
-				self.__dict__[name] = value
+				super().__setattr__(name, value)
 		
-		def Play(self):
+		def Play(self, wait=0):
 			self.Playing = True
 			if self.Mixer: 
-				self.Channel.play(self.Mixer)
+				if wait != 0:
+					delay(lambda: self.Channel.play(self.Mixer), wait)
+				else: self.Channel.play(self.Mixer)
 				self._IsPlaying = True
 		
 		def Stop(self):
@@ -259,11 +291,8 @@ class Orientation:
 					else:
 						self.Stop()
 		
-		def GetPath(self):
-			return self._Path
-
 		def __str__(self):
-			p = self._Path
+			p = self.Path
 			name = p.split("/")[-1]
 			if p.startswith("Audio/sfx"):
 				return f"Sound '{name}'"
@@ -271,14 +300,54 @@ class Orientation:
 				return f"Soundtrack '{name}'"
 			else:
 				return super().__str__()
-			
-	# Visible Instances
+
+	class GuiObject (Instance):
+		_Creatiable = False
+
+		Visible = True
+		BackgroundColor = Color(255,255,255)
+		BackgroundTransparency = 0
+		Size = UDim2.fromOffset(100,100)
+		Position = UDim2()
+		AnchorPoint = Vector2()
+		Rotation = 0
+		ZIndex = 1
+
+		AbsoluteCorner = Vector2()
+		AbsoluteSize = Vector2(100,100)
+		AbsoluteCenter = Vector2(50,50)
+		AbsoluteRotation = 0
+
+		_Surface = None
+
+		def Render(self, surface, dt):
+			c = self.BackgroundColor
+			opacity = int((1 - self.BackgroundTransparency) * 255)
+			surface.fill(Color(c.r, c.g, c.b, opacity))
+	
+	# Visible Workspace Instances
 	
 	class Rect (PVObject):
 		_Creatiable = True
 		
 		def Render(self, surface, dt):
 			surface.fill(self.Color)
+
+	class Frame (GuiObject):
+		_Creatiable = True
+
+	class Label (GuiObject):
+		_Creatiable = True
+		_Face = None
+		
+		Text = "Label Text"
+		Font = "Arial"
+		TextTransparency = 0
+		TextSize = 14
+		TextScaled = True
+		TextBounds = Vector2()
+		TextWrapped = True
+		
 
 # Instance Creator
 class Instance:
@@ -320,4 +389,4 @@ class Instance:
 
 # Initialize Services
 workspace = Instance.service("Workspace")
-workspace.Name = "Workspace"
+PlayerGui = Instance.service("PlayerGui")

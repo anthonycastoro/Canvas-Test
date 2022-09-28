@@ -1,13 +1,14 @@
 import pygame as game
 import sys as system
-import threading
 import Input
+from Common import *
 
 from pygame import Color
 from pygame.math import Vector2
 
 import Instance
-from Instance import workspace
+workspace = Instance.workspace
+PlayerGui = Instance.PlayerGui
 
 # game.mixer.pre_init(frequency=44100, size=-16, channels=100)
 game.init()
@@ -21,7 +22,7 @@ window = game.display.set_mode(
 )
 
 game.display.set_caption(" Loading...")
-game.display.set_icon(game.image.load("./icon.png").convert_alpha())
+game.display.set_icon(game.image.load("Image/icon.png").convert_alpha())
 
 # Debug
 
@@ -34,8 +35,7 @@ running = False
 clock = game.time.Clock()
 frame = 0	
 Delta = 0
-clamp = lambda n, small, big:  max(small, min(n, big))
-FPSCap = 40
+FPSCap = 30
 
 def init():
 	global running
@@ -82,93 +82,134 @@ def init():
 				cam.Zoom = cam.ZoomRange.x
 		
 		# Rendering
-
+		
 		if frame % 10 == 0 or frame == 1: game.display.set_caption(" " + workspace.Name)
-		if frame % FPSCap == 0: print(workspace.FPS)
+		if frame % FPSCap == 0: print(round(workspace.FPS * 10)/10)
 
 		window.fill(workspace.SkyColor)
-		for i in Instance.Orientation._Memory:
+		for i in workspace.GetChildren():
 			if hasattr(i, "Update"): i.Update(dt, window)
-			if hasattr(i, "Render") and i.Transparency < 1:	
-				if i.IsDescendantOf(workspace):
-					# Make Surface
-	
-					size = i.Size * cam.Zoom
-					pos = i.Position * cam.Zoom
+			if hasattr(i, "Render") and i.IsA("PVObject") and i.Transparency < 1:	
+				# Make Surface
 
-					surface = None
+				size = i.Size * cam.Zoom
+				pos = i.Position * cam.Zoom
 
-					unchanging = i.Unchanging
-					if unchanging and i._Surface:
-						surface = i._Surface
+				surface = None
+
+				unchanging = i.Unchanging
+
+				if not i._Surface:
+					surface = game.Surface((size.x, size.y), game.SRCALPHA).convert_alpha()
+					unchanging = False
+				else:
+					surface = i._Surface
+
+				if not unchanging:
+					surface = game.transform.scale(surface, (size.x,size.y))
+					surface.fill(Color(0,0,0,0))
+
+				# Positional Variables
+				
+				ws = window.get_size()
+				cp = cam.Position * cam.Zoom
+
+				i.AbsoluteCenter = Vector2(
+					pos.x + ws[0]/2 - cp.x,
+					-pos.y + ws[1]/2 + cp.y
+				)
+				i.AbsoluteSize = Vector2(size[0], size[1])
+				i.AbsoluteCorner = i.AbsoluteCenter - i.AbsoluteSize / 2
+				
+				dontblit = False
+				if unchanging: # Clamp position and size to inside of window
+					p = i.AbsoluteCorner
+					s = size
+					op = p
+					p = Vector2(clamp(p.x,0,ws[0]), clamp(p.y,0,ws[1]))
+					s = Vector2(
+						s.x-p.x,
+						s.y-p.y
+					) + op
+					s = Vector2(
+						clamp(s.x+p.x,0,ws[0]),
+						clamp(s.y+p.y,0,ws[1])
+					) - p
+					
+					i.AbsoluteCorner = p
+					if s.x > 0 and s.y > 0 and p.x < ws[0] and p.y < ws[1]:
+						surface = game.transform.scale(surface, (s.x, s.y))
+						dontblit = False
+					else: 
+						surface = game.transform.scale(surface, (1,1))
+						dontblit = True
+				else: # Don't render if not onscreen
+					s = size
+					p = i.AbsoluteCorner
+					total = s + p
+					if total.x < 0 or total.y < 0 or p.x > ws[0] or p.y > ws[1]:
+						dontBlit = True
 					else:
-						surface = game.Surface((size.x, size.y), game.SRCALPHA).convert_alpha()
-						surface.fill(Color(0,0,0,0))
-						if unchanging:
-							surface.convert()
-						unchanging = False
+						dontblit = False
+								
+				# Adjust Surface
+				
+				if i.Transparency > 0: surface.set_alpha((1 - i.Transparency) * 255)
+				
+				# Render to surface and rotate
+				i.Render(surface, dt)
+				if i.Rotation != 0 and not unchanging: surface = game.transform.rotate(surface, i.Rotation)
 
-					# Positional Variables
-					
-					ws = window.get_size()
-					cp = cam.Position * cam.Zoom
+				# Paint to Window
 
-					i.AbsoluteCenter = Vector2(
-						pos.x + ws[0]/2 - cp.x,
-						-pos.y + ws[1]/2 + cp.y
-					)
+				if not dontblit:
+					window.blit(surface, (
+						i.AbsoluteCorner.x,
+						i.AbsoluteCorner.y
+					))
 
-					i.AbsoluteCorner = Vector2(
-						pos.x + ws[0]/2 - cp.x - size[0]/2,
-						-pos.y + ws[1]/2 + cp.y - size[1]/2
-					)
+				i._Surface = surface
+				i._Changed = False
 
-					dontblit = False
-					if unchanging: # Scale without recreating surface
-						p = i.AbsoluteCorner
-						s = size
-						op = p
-						p = Vector2(clamp(p.x,0,ws[0]), clamp(p.y,0,ws[1]))
-						s = Vector2(
-							s.x-p.x,
-							s.y-p.y
-						) + op
-						s = Vector2(
-							clamp(s.x+p.x,0,ws[0]),
-							clamp(s.y+p.y,0,ws[1])
-						) - p
-						
-						i.AbsoluteCorner = p
-						if s.x > 0 and s.y > 0 and p.x < ws[0] and p.y < ws[1]:
-							surface = game.transform.scale(surface, (s.x, s.y))
-							dontblit = False
-						else: 
-							surface = game.transform.scale(surface, (1,1))
-							dontblit = True
-						
-					i._Surface = surface
-
-					# Adjust Surface
-					
-					if i.Transparency > 0: surface.set_alpha((1 - i.Transparency) * 255)
-					
-					# Render to surface and rotate
-					i.Render(surface, dt)
-					if i.Rotation != 0 and not unchanging: surface = game.transform.rotate(surface, i.Rotation)
+		for ui in PlayerGui.GetChildren():
+			if hasattr(ui, "Update"): ui.Update(dt, window)
+			def RenderFrame(ui, topsurface):
+				if hasattr(ui, "Render") and ui.IsA("GuiObject"):
+					ws = topsurface.get_size()
 	
-					# Paint to Window
+					surface = None
+					if not ui._Surface:
+						surface = game.Surface((0,0), game.SRCALPHA).convert_alpha()
+					else: surface = i._Surface
+					
+					sx = ui.Size.X
+					sy = ui.Size.Y
+	
+					xsize = sx.Scale * ws[0] + sx.Offset
+					ysize = sy.Scale * ws[1] + sy.Offset
+	
+					px, py = ui.Position.X, ui.Position.Y
+	
+					anchor = ui.AnchorPoint
+					xpos = (px.Scale * ws[0]) + px.Offset - (anchor.x * xsize)
+					ypos = (py.Scale * ws[1]) + py.Offset - (anchor.y * ysize)
+					
+					ui.AbsoluteSize = Vector2(xsize, ysize)
+					ui.AbsoluteCorner = Vector2(xpos, ypos)
+					ui.AbsoluteCenter = ui.AbsoluteCorner + ui.AbsoluteSize / 2
+					
+					surface = game.transform.scale(surface, (xsize, ysize))
+					
+					ui.Render(surface, dt)
+					ui._Surface = surface
+					ui._Changed = False
+					topsurface.blit(surface, (xpos, ypos))
 
-					if not dontblit:
-						window.blit(surface, (
-							i.AbsoluteCorner.x,
-							i.AbsoluteCorner.y
-						))
-										
-					i._Changed = False
-		
+			RenderFrame(ui, window)
+
 		# Finalize
 
 		workspace.FPS = clock.get_fps()
 		game.display.update()
 
-threading.Thread(target=init).start()
+spawn(init)
