@@ -1,19 +1,17 @@
 # Imports
 
-if True: return
-import os, sys
+import os
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
-print(sys.version)
 
 from Instance import Instance, workspace, PlayerGui
 from pygame.math import Vector2
 from pygame import Color
 from Common import *
-import Render
+import Render, Debug
 
 Render.FPSCap = 50
 
-# Level Creation
+# Border Creation
 
 w = 20
 h = 100
@@ -40,8 +38,10 @@ Ceil.Position = Vector2(h,h+w/2)
 Ceil.Size = Vector2(h*2,w)
 Ceil.Parent = workspace
 
+# Testing Music
+
 bg = Instance.new("Sound")
-bg.Path = "music/FunkOdyssey"
+bg.Path = "music/FifthOfBeethoven"
 bg.Looped = True
 bg.Volume = 0.5
 bg.Pan = 0
@@ -52,10 +52,3 @@ bg.Play(2)
 Load = Instance.new("Sound")
 Load.Path = "sfx/checkpoint/Load" + str(random(1,2))
 Load.Play()
-
-FPS = Instance.new("Frame", PlayerGui)
-FPS.Position = UDim2(0,5,1,-5)
-FPS.Size = UDim2(0,100,0,30)
-FPS.AnchorPoint = Vector2(0,1)
-FPS.BackgroundColor = Color(0,0,0)
-FPS.BackgroundTransparency = 0.5

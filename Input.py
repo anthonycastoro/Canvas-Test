@@ -1,5 +1,9 @@
+# Imports
+
 import pygame as game
 from Instance import workspace
+
+# Methods
 
 def KeyExists(name):
 	return hasattr(game, FixKeyName(name))

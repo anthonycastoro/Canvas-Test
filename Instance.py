@@ -1,9 +1,12 @@
+# Imports
+
 import pygame as game
 import os
 
 from pygame import Color
 from pygame.math import Vector2
 from Common import *
+import Enum
 
 # Instance Orientation
 
@@ -19,7 +22,8 @@ class Orientation:
 		_Parent = None
 		_Children = None
 		_Changed = False
-		_DebugId = -1
+		_DebugId = 0
+		_ClassIndex = 0
 		
 		Name = "Instance"
 		ClassName = "Unknown"
@@ -33,6 +37,8 @@ class Orientation:
 			self._ServiceCreated = None
 			self._Creatiable = None
 			self._Children = []
+			t = type(self)
+			t._ClassIndex += 1
 		
 		def __getattr__(self, name):
 			if name == "Parent": return self._Parent
@@ -104,6 +110,9 @@ class Orientation:
 
 		def GetDebugId(self):
 			return self._DebugId
+
+		def GetClassIndex(self):
+			return self._ClassIndex
 			
 		def IsDescendantOf(self, ancestor):
 			parent = None
@@ -199,7 +208,7 @@ class Orientation:
 		
 		def __init__(self):
 			super().__init__()
-			self.Channel = game.mixer.Channel(self.GetDebugId())
+			self.Channel = game.mixer.Channel(self.GetClassIndex())
 		
 		def __setattr__(self, name, value):
 			if name == "Path":
@@ -284,9 +293,8 @@ class Orientation:
 						SetPan(p, multi)
 
 				# Loop Check
-				
 				if not self.Channel.get_busy():
-					if self.Looped and self.Playing:
+					if self.Looped and self._IsPlaying:
 						self.Play()
 					else:
 						self.Stop()
@@ -338,16 +346,139 @@ class Orientation:
 
 	class Label (GuiObject):
 		_Creatiable = True
-		_Face = None
+		_Font = None
+		_FaceName = "Arial"
+				
+		Text = "Label Text" 
+		TextTransparency = 0 
+		TextSize = 14 
+		TextScaled = False 
+		TextColor = Color(0,0,0) 
+		TextWrapped = False # TODO: Work with TextScaled and Center YAlignment
+		AntiAlias = True
+		LineHeight = 0.5
+		TextXAlign = Enum.TextXAlign.Center
+		TextYAlign = Enum.TextYAlign.Center
 		
-		Text = "Label Text"
-		Font = "Arial"
-		TextTransparency = 0
-		TextSize = 14
-		TextScaled = True
+		Bold = False
+		Italic = False
+		Underline = False
+
+		# Read Only
+		
+		TextFits = True
 		TextBounds = Vector2()
-		TextWrapped = True
+
+		if not game.font.get_init(): game.font.init()
 		
+		def GetFontFace(self, name, size):
+			return game.font.Font(f"Font/{name.lower()}.ttf", size)
+		_Font = GetFontFace(None, "Arial", TextSize)
+		
+		def __setattr__(self, name, value):
+			super().__setattr__(name, value)
+			if name == "TextSize" or name == "Font" or name == "TextScaled":
+				self._Font = self.GetFontFace(self._FaceName, 
+					self.TextScaled and 50 or self.TextSize)			
+		
+		def RenderTextWrapping(self, surface):
+			text = self.Text
+			font = self._Font
+			maxwidth = surface.get_width() - 4
+			maxheight = surface.get_height() - 4
+
+			words = text.split()
+			lines = []
+			
+			while len(words) > 0:
+				line_words = []
+				while len(words) > 0:
+					word = words.pop(0).strip()
+					
+					line_words.append(word)
+					fw, _ = font.size(' '.join(line_words + words[:1]))
+					if fw > maxwidth:
+						break
+		
+				lines.append(' '.join(line_words))
+
+			y_offset = 0
+			sw = surface.get_width()
+			texts = []
+			linesize = font.get_linesize() * self.LineHeight
+			for line in lines:
+				text = font.render(line, self.AntiAlias, self.TextColor)
+				addition = text.get_height() + linesize
+				if y_offset + addition > maxheight: 
+					self.TextFits = False
+					break
+				texts.append([text, y_offset])
+				y_offset += addition
+			
+			labelsurface = game.Surface((sw, surface.get_height()), game.SRCALPHA).convert_alpha()
+			labelsurface.fill(Color(0,0,0,0))
+			
+			for text in texts:
+				surf = text[0]
+				y = text[1]
+				rect = surf.get_rect()
+				labelrect = labelsurface.get_rect()
+				
+				if self.TextXAlign == Enum.TextXAlign.Center:
+					rect.center = labelrect.center
+				elif self.TextXAlign == Enum.TextXAlign.Left:
+					rect.left = labelrect.left + 2
+				elif self.TextXAlign == Enum.TextXAlign.Right:
+					rect.right = labelrect.right - 2
+	
+				if self.TextYAlign == Enum.TextYAlign.Center:
+					rect.top = y + (labelrect.bottom - y_offset + surf.get_height()) / 2
+				elif self.TextYAlign == Enum.TextYAlign.Top:
+					rect.top = y
+				elif self.TextYAlign == Enum.TextYAlign.Bottom:
+					rect.top = y + labelrect.bottom - y_offset
+				
+				surf.set_alpha(toAlpha(self.TextTransparency))
+				labelsurface.blit(surf, rect)
+			
+			surface.blit(labelsurface, (0,0))
+		
+		def Render(self, surface, dt):
+			super().Render(surface, dt)
+			font = self._Font
+			font.bold = self.Bold
+			font.italic = self.Italic
+			font.underline = self.Underline
+
+			self.TextFits = True
+			if self.TextWrapped:
+				self.RenderTextWrapping(surface)
+			else:
+				text = font.render(self.Text, self.AntiAlias, self.TextColor)
+				if self.TextScaled:
+					text = AspectRatioScale(text, surface.get_width(), surface.get_height())
+				rect = text.get_rect()
+				labelrect = surface.get_rect()
+				
+				if self.TextXAlign == Enum.TextXAlign.Center:
+					rect.centerx = labelrect.centerx
+				elif self.TextXAlign == Enum.TextXAlign.Left:
+					rect.left = labelrect.left + 2
+				elif self.TextXAlign == Enum.TextXAlign.Right:
+					rect.right = labelrect.right - 2
+	
+				if self.TextYAlign == Enum.TextYAlign.Center:
+					rect.centery = labelrect.centery
+				elif self.TextYAlign == Enum.TextYAlign.Top:
+					rect.top = labelrect.top + 2
+				elif self.TextYAlign == Enum.TextYAlign.Bottom:
+					rect.bottom = labelrect.bottom - 2
+				
+				self.TextBounds = Vector2(text.get_width(), text.get_height())
+				text.set_alpha(toAlpha(self.TextTransparency))
+				surface.blit(text, rect)
+				if text.get_width() > surface.get_width() or text.get_height() > surface.get_height():
+					self.TextFits = False		
 
 # Instance Creator
 class Instance:

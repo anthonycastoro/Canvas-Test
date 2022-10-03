@@ -5,6 +5,7 @@ from Common import *
 
 from pygame import Color
 from pygame.math import Vector2
+from Signal import Signal
 
 import Instance
 workspace = Instance.workspace
@@ -12,6 +13,7 @@ PlayerGui = Instance.PlayerGui
 
 # game.mixer.pre_init(frequency=44100, size=-16, channels=100)
 game.init()
+game.mixer.set_num_channels(30)
 game.event.set_allowed([game.QUIT, game.KEYDOWN, game.KEYUP])
 
 screendata = game.display.Info()
@@ -33,17 +35,15 @@ def DebugDot(pos):
 
 running = False
 clock = game.time.Clock()
-frame = 0	
+Frame = 0	
 Delta = 0
 FPSCap = 30
+Stepped = Signal()
 
 def init():
-	global running
-	global frame
-	global clock
-	global Delta
-	global clamp
-	global FPSCap
+	global running, Frame, clock
+	global Delta, clamp, FPSCap
+	global Stepped
 	
 	if running: return
 	
@@ -51,9 +51,10 @@ def init():
 	cam = workspace.Camera
 	
 	while 1:
-		frame += 1
+		Frame += 1
 		dt = clock.tick(FPSCap) / 1000
 		Delta = dt
+		Stepped.Fire(dt)
 		
 		# Event Handlers
 
@@ -83,12 +84,14 @@ def init():
 		
 		# Rendering
 		
-		if frame % 10 == 0 or frame == 1: game.display.set_caption(" " + workspace.Name)
-		if frame % FPSCap == 0: print(round(workspace.FPS * 10)/10)
-
+		if Frame % 10 == 0 or Frame == 1: game.display.set_caption(" " + workspace.Name)
+		#if Frame % FPSCap == 0 or workspace.FPS < 20: print(round(workspace.FPS * 10)/10)
+		
 		window.fill(workspace.SkyColor)
+		for obj in Instance.Orientation._Memory:
+			if hasattr(obj, "Update"): obj.Update(dt, window)
+		
 		for i in workspace.GetChildren():
-			if hasattr(i, "Update"): i.Update(dt, window)
 			if hasattr(i, "Render") and i.IsA("PVObject") and i.Transparency < 1:	
 				# Make Surface
 
@@ -148,13 +151,13 @@ def init():
 					p = i.AbsoluteCorner
 					total = s + p
 					if total.x < 0 or total.y < 0 or p.x > ws[0] or p.y > ws[1]:
-						dontBlit = True
+						dontblit = True
 					else:
 						dontblit = False
 								
 				# Adjust Surface
 				
-				if i.Transparency > 0: surface.set_alpha((1 - i.Transparency) * 255)
+				if i.Transparency > 0: surface.set_alpha(toAlpha(self.Transparency))
 				
 				# Render to surface and rotate
 				i.Render(surface, dt)
@@ -172,7 +175,6 @@ def init():
 				i._Changed = False
 
 		for ui in PlayerGui.GetChildren():
-			if hasattr(ui, "Update"): ui.Update(dt, window)
 			def RenderFrame(ui, topsurface):
 				if hasattr(ui, "Render") and ui.IsA("GuiObject"):
 					ws = topsurface.get_size()
@@ -180,7 +182,7 @@ def init():
 					surface = None
 					if not ui._Surface:
 						surface = game.Surface((0,0), game.SRCALPHA).convert_alpha()
-					else: surface = i._Surface
+					else: surface = ui._Surface
 					
 					sx = ui.Size.X
 					sy = ui.Size.Y
@@ -199,10 +201,15 @@ def init():
 					ui.AbsoluteCenter = ui.AbsoluteCorner + ui.AbsoluteSize / 2
 					
 					surface = game.transform.scale(surface, (xsize, ysize))
+					surface = game.transform.rotate(surface, ui.Rotation)	
 					
 					ui.Render(surface, dt)
 					ui._Surface = surface
 					ui._Changed = False
+
+					for child in ui.GetChildren():
+						RenderFrame(child, surface)
+										
 					topsurface.blit(surface, (xpos, ypos))
 
 			RenderFrame(ui, window)
