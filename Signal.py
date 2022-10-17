@@ -4,10 +4,12 @@ class Signal:
 	def __init__(self, invocation=False):
 		self.Connections = []
 		self.InvocationQueue = invocation and []
+		self.InvocationEnabled = invocation
+		self._Connection = None
 	
 	# Magic Methods
 	
-	__str__ = lambda self: "<ScriptSignal>"
+	__str__ = lambda self: "<Signal>"
 
 	# Connection Class
 
@@ -32,8 +34,6 @@ class Signal:
 			self.Connections.remove(self.Callback)
 			self.Connected = False
 			self.__str__ = lambda: "<Inactive Connection>"
-
-
 	
 	# Methods
 
@@ -48,11 +48,11 @@ class Signal:
 		
 		return connection
 
+	InvocationMax = 255
 	def Fire(self, *Params):
 		if len(self.Connections) == 0 and self.InvocationQueue:
-			if len(self.InvocationQueue) >= 250:
-				raise Exception("The invocation queue for a signal is exhausted." 
-								+ " Did you forget to connect this event?")
+			if len(self.InvocationQueue) >= self.InvocationMax:
+				raise Exception(f"Did you forget to connect to this event? ({self.InvocationMax} events dropped)")
 			self.InvocationQueue.append(Params)
 		else:
 			for connection in self.Connections:

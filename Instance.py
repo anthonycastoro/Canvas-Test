@@ -7,12 +7,12 @@ from pygame import Color
 from pygame.math import Vector2
 from Common import *
 import Enum
+from Signal import Signal
 
 # Instance Orientation
 
 class Orientation:
-	_Memory = []
-	_DebugId = 0
+	_TotalDebugId = 0
 
 	# Base Class For Everything
 	class Instance:
@@ -24,52 +24,74 @@ class Orientation:
 		_Changed = False
 		_DebugId = 0
 		_ClassIndex = 0
+		_Locked = False
 		
 		Name = "Instance"
 		ClassName = "Unknown"
 		Destroyed = False
 		
+		ChildAdded = Signal()
+		ChildRemoved = Signal()
+		DescendantAdded = Signal()
+		DescendantRemoved = Signal()
+		Changed = Signal()
+		
 		__str__ = lambda self: self.Name
 
 		def __init__(self):
-			self._DebugId = Orientation._DebugId
-			Orientation._DebugId += 1
+			self._DebugId = Orientation._TotalDebugId
+			Orientation._TotalDebugId += 1
 			self._ServiceCreated = None
 			self._Creatiable = None
 			self._Children = []
 			t = type(self)
 			t._ClassIndex += 1
+
+		@property
+		def Parent(self):
+			return self._Parent
+
+		@Parent.setter
+		def Parent(self, value):
+			if (self._Service or self.Destroyed) and value != None: raise Exception(f"Parent is locked to None, attempt to set to '{value}'")
+			if self._Locked: raise Exception(f"Parent property of '{self}' is locked.")
+			
+			if not (isinstance(value, Orientation.Instance) or value == None):
+				raise AttributeError("Must set Parent to an Instance or None.")
+			before = self._Parent
+			self._Parent = value
+			if before: before._Children.remove(self)
+			if value: value._Children.append(self)
+		
+		@property
+		def IsChangedThisFrame(self): return self._Changed
 		
 		def __getattr__(self, name):
-			if name == "Parent": return self._Parent
-			if name == "HasChanged": return self._Changed
-			raise AttributeError(self.ClassName + " does not have the attribute '" + name + "''")
+			if not name in self.__dict__:
+				for child in self._Children: # Allow indexing by child name
+					if child.Name == name: return child
+				raise AttributeError(f"'{self.Name}' has no attribute '{name}'!")
+			else:
+				return self.__dict__[name]
 		
 		def __setattr__(self, name, value):
-			if not isinstance(self, object):
-				raise AttributeError("Cannot set index of base class.")
-
-			if getattr(self, name) != value:
-				self.__dict__["_Changed"] = True
-			
-			if name == "Parent":
-				if not (isinstance(value, Orientation.Instance) or value == None):
-					raise AttributeError("Must set Parent to an Instance or None.")
-				before = self._Parent
-				self._Parent = value
-				if before: before._Children.remove(self)
-				if value: value._Children.append(self)
-			else:
-				self.__dict__[name] = value
+			if hasattr(self, name) and getattr(self, name) != value and not name.startswith("_"): # Indicate if property has changed
+				self._Changed = True
+				self.Changed.Fire(name)
+			elif not hasattr(self, name):
+				raise AttributeError(f"'{self.Name}' has no settable attribute '{name}'!")
+			super().__setattr__(name, value)
 
 		def Destroy(self):
 			if not self.Destroyed:
-				Orientation._Memory.remove(self)
+				self.Destroyed = True
 				self.Parent = None
-				self.Destoryed = True
+				
+				if hasattr(self, "__destroy__"): self.__destroy__()
+					
 				for child in self._Children:
 					child.Destroy()
-				self._Children = []
+				self._Children.clear()
 		def Dispose(self):
 			self.Destroy()
 		def Remove(self):
@@ -136,7 +158,9 @@ class Orientation:
 					if i == "Destroyed": continue
 					if i.startswith("_"): continue
 					if callable(v): continue
+					
 					setattr(cloned,i,v)
+				Instance._fixImmutableAttributes(cloned)
 				return cloned
 			else:
 				raise Exception(f"Cannot clone Service '{self.ClassName}'")
@@ -145,28 +169,57 @@ class Orientation:
 	class Workspace (Instance):
 		_Creatiable = False
 		_Service = True
-		Name = "Workspace"
+		_AwakeParts = []
+		_CurrentCamera = None
 		
 		SkyColor = Color(125,125,255)
 		Gravity = 100
 		FPS = 0
+		MasterVolume = 1
+		VoidDepth = 20
+		PlanckLength = 0.01
+		
+		@property
+		def CurrentCamera(self):
+			return self._CurrentCamera
 
-		class Camera:
-			Position = Vector2(0,0)
-			Roll = 0
-			Zoom = 50
-			ZoomIncrement = 70
-			ZoomRange = Vector2(3, 150)
-			Speed = Vector2(7,7)
+		@CurrentCamera.setter
+		def CurrentCamera(self, value):
+			if type(value) == Orientation.Camera or value == None:
+				self._CurrentCamera = value
+			else:
+				raise AttributeError(f"CurrentCamera must be a Camera. Got a '{type(value).__name__}'")
+
 
 	class PlayerGui (Instance):
 		_Creatiable = False
 		_Service = True
-		Name = "PlayerGui"
 
 		Debug = True
-	
-	# Abstract Instances
+
+	# Misc Instances
+	class Player (Instance):
+		_Creatiable = True
+		
+		Character = None
+		Score = 0
+		LivesLost = -1
+		UserColor = Color(0,240,0)
+		Health = 100
+		DisplayName = os.environ["REPL_OWNER"]
+
+	class Camera (Instance):
+		_Creatiable = True
+		
+		Position = Vector2(2,2)
+		Roll = 0
+		Zoom = 4
+		ZoomIncrement = 50
+		ZoomRange = Vector2(2, 150)
+		Speed = Vector2(7,7)
+		Mode = Enum.CameraMode.Debug
+			
+	# Abstract Classes
 	class PVObject (Instance):
 		_Creatiable = False
 		
@@ -180,21 +233,38 @@ class Orientation:
 		Rotation = 0
 		Transparency = 0
 		ZIndex = 1
-		
+		Anchored = True
+		CanCollide = True
+
 		AbsoluteCorner = Vector2()
 		AbsoluteSize = Vector2(100,100)
 		AbsoluteCenter = Vector2(50,50)
+				
+		def __init__(self):
+			super().__init__()
+			workspace._AwakeParts.append(self)
 
+		def __destroy__(self):
+			workspace._AwakeParts.remove(self)
+
+		def GetRect(self):
+			planck = workspace.PlanckLength
+			p = Vector2(self.Position.x, -self.Position.y) / planck
+			s = self.Size / planck
+			return game.Rect(p - s/2, s)
+
+		def Crush(self):
+			self.Destroy()
+		
 	# Invisible Instances
 	
 	class Sound (Instance):
 		_Creatiable = True
 		_IsPlaying = False
 		_Path = ""
-		Path = ""
-		
-		Mixer = None
-		Channel = None
+				
+		_Mixer = None
+		_Channel = None
 		Playing = False
 		Paused = False
 		Looped = False
@@ -205,51 +275,58 @@ class Orientation:
 		
 		MaxDistance = 20
 		MinDistance = 0
+
+		@property
+		def Path(self):
+			return self._Path
+
+		@Path.setter
+		def Path(self, value):
+			if self._Mixer: self._Mixer.stop()
+			split = value.split("/")
+			name = split[-1]
+			del split[-1]
+			fold = "/".join(split)
+			ext = ""
+			
+			for file in os.listdir("Audio/" + fold):
+				if file.startswith(name):
+					ext = "." + file.split(".")[-1]
+					break
+			
+			p = "Audio/" + value + ext
+			self._Mixer = game.mixer.Sound(p)
+			self._Mixer.stop()
+			self.Length = self._Mixer.get_length()
+			self._Path = value
+
+		@property
+		def PlaybackLoudness(self):
+			return self._Channel.get_volume()
 		
 		def __init__(self):
 			super().__init__()
-			self.Channel = game.mixer.Channel(self.GetClassIndex())
-		
-		def __setattr__(self, name, value):
-			if name == "Path":
-				if self.Mixer: self.Mixer.stop()
-				split = value.split("/")
-				name = split[-1]
-				del split[-1]
-				fold = "/".join(split)
-				ext = ""
-				
-				for file in os.listdir("Audio/" + fold):
-					if file.startswith(name):
-						ext = "." + file.split(".")[-1]
-						break
-				
-				p = "Audio/" + value + ext
-				self.Mixer = game.mixer.Sound(p)
-				self.Length = self.Mixer.get_length()
-				self.__dict__["Path"] = p
-			else:
-				super().__setattr__(name, value)
+			self._Channel = game.mixer.Channel(self.GetClassIndex())
 		
 		def Play(self, wait=0):
-			self.Playing = True
-			if self.Mixer: 
+			if self._Mixer:
 				if wait != 0:
-					delay(lambda: self.Channel.play(self.Mixer), wait)
-				else: self.Channel.play(self.Mixer)
+					return delay(self.Play, wait)
+				self._Channel.play(self._Mixer)
+				self.Playing = True
 				self._IsPlaying = True
 		
 		def Stop(self):
 			if self._IsPlaying:
 				self.Playing = False
-				if self.Mixer:
-					self.Channel.stop()
+				if self._Mixer:
+					self._Channel.stop()
 					self._IsPlaying = False
 		
 		# Update
 		
 		def Update(self, dt, window):
-			if self.Mixer and self.Channel:
+			if self._Mixer and self._Channel:
 				# Playing Check
 
 				if not self.Playing and self._IsPlaying:
@@ -258,9 +335,9 @@ class Orientation:
 				# Paused Check
 				
 				if self.Paused:
-					self.Channel.pause()
+					self._Channel.pause()
 				else:
-					self.Channel.unpause()
+					self._Channel.unpause()
 
 				# Volume and Pan Check
 
@@ -268,12 +345,12 @@ class Orientation:
 					pan = (pan + 1) / 2 # 0 to 1 instead of -1 to 1
 					if pan < 0: pan = 0
 					if pan > 1: pan = 1
-					self.Channel.set_volume((1 - pan) * multi, pan * multi)
+					multi *= workspace.MasterVolume
+					self._Channel.set_volume((1 - pan) * multi, pan * multi)
 					
 				if self.Playing:
-					#self.Mixer.set_volume(self.Volume)
 					if not self.Parent:
-						SetPan(self.Pan)
+						SetPan(self.Pan, self.Volume)
 					else:
 						p = self.Parent.AbsoluteCenter.x / window.get_width()
 						if p < 0: p = 0
@@ -290,11 +367,11 @@ class Orientation:
 							multi = 1
 						else:
 							multi = (dist - max) / (min - max)
-						SetPan(p, multi)
+						SetPan(p, multi * self.Volume)
 
 				# Loop Check
-				if not self.Channel.get_busy():
-					if self.Looped and self._IsPlaying:
+				if not self._Channel.get_busy():
+					if self.Looped and self._IsPlaying and self.Playing:
 						self.Play()
 					else:
 						self.Stop()
@@ -379,7 +456,7 @@ class Orientation:
 			super().__setattr__(name, value)
 			if name == "TextSize" or name == "Font" or name == "TextScaled":
 				self._Font = self.GetFontFace(self._FaceName, 
-					self.TextScaled and 50 or self.TextSize)			
+					self.TextScaled and 50 or self.TextSize)
 		
 		def RenderTextWrapping(self, surface):
 			text = self.Text
@@ -493,7 +570,7 @@ class Instance:
 		if service and not Creator._Service:
 			raise NotImplementedError(f"'{className}' is not a service!")
 		elif Creator._Service and not service:
-			raise Exception("Cannot create a service instance normally!")
+			raise Exception("Cannot create a service!")
 		elif service and Creator._ServiceCreated:
 			return Instance.services[className]
 		elif Creator._Service and service:
@@ -505,11 +582,10 @@ class Instance:
 		else:
 			raise Exception(f"'{className}' is not creatable!")
 		
-		Orientation._Memory.append(Object)
 		Object.ClassName = className
-		Object.Parent = parent
 		Object.Name = className
-		
+		Instance._fixImmutableAttributes(Object)
+		Object.Parent = parent
 		return Object
 
 	def service(serviceName):
@@ -518,6 +594,24 @@ class Instance:
 		
 		return Instance.new(serviceName, None, True)
 
+	def _fixImmutableAttributes(Object):
+		for i in dir(Object):
+			v = getattr(Object, i)
+			if type(v) == Signal:
+				setattr(Object, i, Signal(v.InvocationEnabled))
+			if type(v) == Vector2:
+				setattr(Object, i, Vector2(v.x, v.y))
+			if type(v) == Color:
+				setattr(Object, i, Color(v.r, v.g, v.b, v.a))
+
 # Initialize Services
+
 workspace = Instance.service("Workspace")
 PlayerGui = Instance.service("PlayerGui")
+workspace.CurrentCamera = Instance.new("Camera", workspace)
+
+# Run Scripts
+
+for script in os.listdir("Scripts"):
+	if script.endswith(".py"):
+		spawn(lambda: exec("from Scripts import " + script[:-3]))

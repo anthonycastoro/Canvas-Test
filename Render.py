@@ -6,12 +6,11 @@ from Common import *
 from pygame import Color
 from pygame.math import Vector2
 from Signal import Signal
+import Enum, Instance
 
-import Instance
 workspace = Instance.workspace
 PlayerGui = Instance.PlayerGui
 
-# game.mixer.pre_init(frequency=44100, size=-16, channels=100)
 game.init()
 game.mixer.set_num_channels(30)
 game.event.set_allowed([game.QUIT, game.KEYDOWN, game.KEYUP])
@@ -48,7 +47,7 @@ def init():
 	if running: return
 	
 	running = True
-	cam = workspace.Camera
+	cam = workspace.CurrentCamera
 	
 	while 1:
 		Frame += 1
@@ -63,24 +62,21 @@ def init():
 				game.quit()
 				system.exit()
 				running = False
-				break
-		
-		if Input.IsKeyDown("w", "up"):
-			cam.Position += Vector2(0, dt * cam.Speed.x)
-		if Input.IsKeyDown("s", "down"):
-			cam.Position -= Vector2(0, dt * cam.Speed.x)
-		if Input.IsKeyDown("a", "left"):
-			cam.Position -= Vector2(dt * cam.Speed.y, 0)
-		if Input.IsKeyDown("d", "right"):
-			cam.Position += Vector2(dt * cam.Speed.y, 0)					
-		if Input.IsKeyDown("equals", "i"):
-			cam.Zoom += dt * cam.ZoomIncrement
-			if cam.Zoom > cam.ZoomRange.y:
-				cam.Zoom = cam.ZoomRange.y
-		if Input.IsKeyDown("minus", "o"):
-			cam.Zoom -= dt * cam.ZoomIncrement
-			if cam.Zoom < cam.ZoomRange.x:
-				cam.Zoom = cam.ZoomRange.x
+				return
+
+			if event.type == game.KEYDOWN:
+				enum = Enum.KeyCode.GetItemById(event.key)
+				if enum:
+					Input.InputBegan.Fire(enum)
+				else:
+					Input.InputUnknown.Fire(event.key)
+			
+			if event.type == game.KEYUP:
+				enum = Enum.KeyCode.GetItemById(event.key)
+				if enum:
+					Input.InputEnded.Fire(enum)
+				else:
+					Input.InputUnknown.Fire(event.key)
 		
 		# Rendering
 		
@@ -88,10 +84,9 @@ def init():
 		#if Frame % FPSCap == 0 or workspace.FPS < 20: print(round(workspace.FPS * 10)/10)
 		
 		window.fill(workspace.SkyColor)
-		for obj in Instance.Orientation._Memory:
-			if hasattr(obj, "Update"): obj.Update(dt, window)
 		
 		for i in workspace.GetChildren():
+			if hasattr(i, "Update"): i.Update(dt, window)
 			if hasattr(i, "Render") and i.IsA("PVObject") and i.Transparency < 1:	
 				# Make Surface
 
@@ -115,6 +110,7 @@ def init():
 				# Positional Variables
 				
 				ws = window.get_size()
+				ws = (ws[0] + 1, ws[1] + 1)
 				cp = cam.Position * cam.Zoom
 
 				i.AbsoluteCenter = Vector2(
@@ -129,14 +125,14 @@ def init():
 					p = i.AbsoluteCorner
 					s = size
 					op = p
-					p = Vector2(clamp(p.x,0,ws[0]), clamp(p.y,0,ws[1]))
+					p = Vector2(clamp(p.x,-1,ws[0]), clamp(p.y,-1,ws[1]))
 					s = Vector2(
 						s.x-p.x,
 						s.y-p.y
 					) + op
 					s = Vector2(
-						clamp(s.x+p.x,0,ws[0]),
-						clamp(s.y+p.y,0,ws[1])
+						clamp(s.x+p.x,-1,ws[0]),
+						clamp(s.y+p.y,-1,ws[1])
 					) - p
 					
 					i.AbsoluteCorner = p
@@ -176,6 +172,7 @@ def init():
 
 		for ui in PlayerGui.GetChildren():
 			def RenderFrame(ui, topsurface):
+				if hasattr(ui, "Update"): ui.Update(dt, window)
 				if hasattr(ui, "Render") and ui.IsA("GuiObject"):
 					ws = topsurface.get_size()
 	

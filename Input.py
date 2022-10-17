@@ -2,36 +2,23 @@
 
 import pygame as game
 from Instance import workspace
+from Signal import Signal
+import Enum
 
 # Methods
 
-def KeyExists(name):
-	return hasattr(game, FixKeyName(name))
+def IsKeyDown(*codes):
+	for code in codes:
+		id = Enum.Reveal(Enum.KeyCode, code).Value
+		if game.key.get_pressed()[id]:
+			return True
+	return False
 
-def GetKey(name):
-	if type(name) == int: return name
-	if KeyExists(name): return getattr(game, FixKeyName(name))
-
-def FixKeyName(name):
-	if type(name) == int: return name
+def IsFocused(): return game.mouse.get_focused()
 	
-	if hasattr(game, "K_" + name.upper()):
-		return "K_" + name.upper()
-	elif hasattr(game, "K_" + name.lower()):
-		return "K_" + name.lower()
-	else:
-		return name
+# Events
 
-def IsKeyDownNow(event, *names):
-	if event.type != game.KEYDOWN: return False
-	for name in names:
-		if event.key == GetKey(name):
-			return True
-	return False
-
-def IsKeyDown(*names):
-	keys = game.key.get_pressed()
-	for name in names:
-		if GetKey(name) and keys[GetKey(name)]:
-			return True
-	return False
+InputBegan = Signal() # When key is pressed
+InputEnded = Signal() # When key is released
+InputChanged = Signal() # When mouse moves
+InputUnknown = Signal() # When unhandled input is read
